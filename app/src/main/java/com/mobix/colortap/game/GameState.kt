@@ -1,26 +1,43 @@
 package com.mobix.colortap.game
 
+import androidx.compose.ui.graphics.Color
+
+enum class TargetType { NORMAL, TRAP, GOLDEN, POWER_UP }
+
+data class Particle(val id: Long, val x: Float, val y: Float, val vx: Float, val vy: Float, val color: Color, val alpha: Float = 1f)
+data class TapEffect(val id: Long, val x: Float, val y: Float, val text: String, val color: Color)
+
 data class GameState(
     val isRunning: Boolean = false,
     val isGameOver: Boolean = false,
-
+    val currentLevel: Int = 1,
     val score: Int = 0,
+    val scoreInLevel: Int = 0,
     val bestScore: Int = 0,
-    val timeLeft: Int = GameConfig.ROUND_SECONDS,
+    val timeLeft: Int = 30,
+    val combo: Int = 0,
+    val isFeverMode: Boolean = false,
 
-    // Target info (px)
+    // ميزات التفاعل الجديدة
+    val missionDescription: String = "Tap 10 targets",
+    val missionProgress: Int = 0,
+    val missionGoal: Int = 10,
+    val activePowerUp: PowerUpType = PowerUpType.NONE,
+    val isTimeFrozen: Boolean = false,
+
     val targetVisible: Boolean = false,
     val targetX: Float = 0f,
     val targetY: Float = 0f,
-    val targetColorArgb: Long = 0xFF4CAF50, // default
+    val targetColorArgb: Long = 0xFF4CAF50,
+    val targetType: TargetType = TargetType.NORMAL,
+    val powerUpType: PowerUpType = PowerUpType.NONE,
 
-    val combo: Int = 0,
-    val targetLifeMs: Long = GameConfig.START_LIFE_MS,
-
-    // Play area size (px)
+    val particles: List<Particle> = emptyList(),
+    val effects: List<TapEffect> = emptyList(),
+    val showLevelUp: Boolean = false,
     val areaWidthPx: Int = 0,
     val areaHeightPx: Int = 0,
-
-    // Used to trigger new targets
-    val targetId: Long = 0L
-)
+    val isScreenShaking: Boolean = false
+) {
+    val levelProgress: Float get() = scoreInLevel.toFloat() / (GameConfig.LEVELS.getOrNull(currentLevel - 1)?.targetScore ?: 1)
+}

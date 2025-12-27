@@ -1,34 +1,42 @@
 package com.mobix.colortap.ui.components
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.animation.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 @Composable
-fun TopHud(
-    timeLeft: Int,
-    score: Int,
-    combo: Int
-) {
+fun TopHud(timeLeft: Int, score: Int, combo: Int) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
+        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text(
-            text = "⏱️ ${timeLeft}s",
-            style = MaterialTheme.typography.titleMedium
-        )
-        Text(
-            text = "⭐ $score",
-            style = MaterialTheme.typography.titleMedium
-        )
-        Text(
-            text = "🔥 $combo",
-            style = MaterialTheme.typography.titleMedium
-        )
+        HudCard("TIME", "${timeLeft}s", Color(0xFFFF3B30), Modifier.weight(1f))
+        HudCard("SCORE", "$score", Color(0xFF34C759), Modifier.weight(1f))
+        HudCard("COMBO", "x$combo", Color(0xFFFFCC00), Modifier.weight(1f))
+    }
+}
+
+@Composable
+fun HudCard(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier.clip(RoundedCornerShape(12.dp)).background(Color.White.copy(0.05f))
+            .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(12.dp)).padding(8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(label, fontSize = 10.sp, color = Color.Gray, fontWeight = FontWeight.Bold)
+        AnimatedContent(targetState = value, label = "") {
+            Text(it, fontSize = 18.sp, fontWeight = FontWeight.Black, color = color)
+        }
     }
 }

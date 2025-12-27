@@ -5,181 +5,167 @@ import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mobix.colortap.data.ScoreDataStore
-import com.mobix.colortap.game.GameConfig
-import com.mobix.colortap.game.GameState
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
-import kotlin.math.max
+import com.mobix.colortap.game.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.*
 import kotlin.random.Random
 
 class GameViewModel(application: Application) : AndroidViewModel(application) {
-
     private val store = ScoreDataStore(application)
-
     private val _state = MutableStateFlow(GameState())
     val state = _state.asStateFlow()
 
     private var timerJob: Job? = null
     private var targetJob: Job? = null
+    private var physicsJob: Job? = null
 
     init {
         viewModelScope.launch {
-            store.bestScoreFlow.collect { best ->
-                _state.update { it.copy(bestScore = best) }
-            }
+            store.bestScoreFlow.collect { best -> _state.update { it.copy(bestScore = best) } }
         }
     }
 
-    fun setPlayAreaSize(widthPx: Int, heightPx: Int) {
-        _state.update { it.copy(areaWidthPx = widthPx, areaHeightPx = heightPx) }
+    fun setPlayAreaSize(w: Int, h: Int) {
+        _state.update { it.copy(areaWidthPx = w, areaHeightPx = h) }
+        if (_state.value.isRunning && !_state.value.targetVisible) spawnNewTarget()
     }
 
     fun startGame() {
         stopJobs()
-
-        _state.update {
-            it.copy(
-                isRunning = true,
-                isGameOver = false,
-                score = 0,
-                combo = 0,
-                timeLeft = GameConfig.ROUND_SECONDS,
-                targetLifeMs = GameConfig.START_LIFE_MS
-            )
-        }
-
+        _state.update { GameState(isRunning = true, bestScore = it.bestScore, areaWidthPx = it.areaWidthPx, areaHeightPx = it.areaHeightPx) }
+        generateNewMission()
         spawnNewTarget()
+        startTimer()
+        startPhysicsLoop()
+    }
 
+    private fun startTimer() {
         timerJob = viewModelScope.launch {
-            while (true) {
+            while (isActive) {
                 delay(1000)
-                val newTime = _state.value.timeLeft - 1
-                if (newTime <= 0) {
-                    endGame()
-                    break
-                } else {
-                    _state.update { it.copy(timeLeft = newTime) }
-                }
-            }
-        }
-
-        targetJob = viewModelScope.launch {
-            while (_state.value.isRunning) {
-                val life = _state.value.targetLifeMs
-                delay(life)
-
-                // If target still visible and not tapped => miss
-                if (_state.value.isRunning && _state.value.targetVisible) {
-                    onMiss()
-                    spawnNewTarget()
-                }
+                if (_state.value.showLevelUp || _state.value.isTimeFrozen) continue
+                if (_state.value.timeLeft <= 1) { endGame(); break }
+                _state.update { it.copy(timeLeft = it.timeLeft - 1) }
             }
         }
     }
 
-    fun onTargetTap() {
-        val current = _state.value
-        if (!current.isRunning || !current.targetVisible) return
+    fun onTargetTap(x: Float, y: Float) {
+        val s = _state.value
+        if (!s.isRunning || !s.targetVisible || s.showLevelUp) return
 
-        val newScore = current.score + 1
-        val newCombo = current.combo + 1
+        createExplosion(x + 100f, y + 100f, Color(s.targetColorArgb))
 
-        val shouldIncrease = (newScore % GameConfig.SCORE_STEP_TO_INCREASE_DIFFICULTY == 0)
-        val newLife = if (shouldIncrease) {
-            max(GameConfig.MIN_LIFE_MS, current.targetLifeMs - GameConfig.LIFE_DECREASE_MS)
-        } else current.targetLifeMs
-
-        _state.update {
-            it.copy(
-                score = newScore,
-                combo = newCombo,
-                targetVisible = false,
-                targetLifeMs = newLife
-            )
+        // تحديث المهمة
+        if (s.missionProgress < s.missionGoal) {
+            _state.update { it.copy(missionProgress = it.missionProgress + 1) }
+            if (_state.value.missionProgress >= s.missionGoal) addEffect(x, y, "MISSION COMPLETE!", Color.Yellow)
         }
 
-        spawnNewTarget()
+        when (s.targetType) {
+            TargetType.TRAP -> {
+                triggerShake()
+                addEffect(x, y, "-5s", Color.Red)
+                _state.update { it.copy(timeLeft = (it.timeLeft - 5).coerceAtLeast(0), combo = 0, targetVisible = false) }
+            }
+            TargetType.POWER_UP -> {
+                handlePowerUp(s.powerUpType, x, y)
+                _state.update { it.copy(targetVisible = false) }
+            }
+            else -> {
+                val points = if (s.isFeverMode) 3 else 1
+                addEffect(x, y, "+$points", if (s.isFeverMode) Color.Magenta else Color.Cyan)
+                _state.update { it.copy(score = it.score + points, scoreInLevel = it.scoreInLevel + 1, combo = it.combo + 1, isFeverMode = it.combo + 1 >= GameConfig.FEVER_COMBO_THRESHOLD, targetVisible = false) }
+            }
+        }
+
+        checkLevelProgress()
     }
 
-    private fun onMiss() {
-        // خيار: ما تنقص نقاط، بس صفّر الكومبو
-        _state.update { it.copy(combo = 0) }
+    private fun handlePowerUp(type: PowerUpType, x: Float, y: Float) {
+        when (type) {
+            PowerUpType.FREEZE -> {
+                addEffect(x, y, "TIME FROZEN!", Color.Cyan)
+                viewModelScope.launch {
+                    _state.update { it.copy(isTimeFrozen = true) }
+                    delay(5000)
+                    _state.update { it.copy(isTimeFrozen = false) }
+                }
+            }
+            PowerUpType.MULTIPLIER -> {
+                addEffect(x, y, "SCORE x5!", Color.Magenta)
+                _state.update { it.copy(score = it.score + 5) }
+            }
+            else -> {}
+        }
+    }
+
+    private fun generateNewMission() {
+        val goals = listOf(10, 15, 20)
+        _state.update { it.copy(missionDescription = "Tap ${goals.random()} targets", missionProgress = 0, missionGoal = goals.random()) }
+    }
+
+    private fun checkLevelProgress() {
+        val s = _state.value
+        val levelData = GameConfig.LEVELS.getOrNull(s.currentLevel - 1)
+        if (levelData != null && s.scoreInLevel >= levelData.targetScore) goToNextLevel() else spawnNewTarget()
     }
 
     private fun spawnNewTarget() {
-        val s = _state.value
-        if (s.areaWidthPx <= 0 || s.areaHeightPx <= 0) {
-            // إذا لسه ما انقاس حجم الشاشة، خلّيه ظاهر بمكان ثابت مؤقتاً
-            _state.update {
-                it.copy(
-                    targetVisible = true,
-                    targetX = 0f,
-                    targetY = 0f,
-                    targetColorArgb = randomColor().value.toLong(),
-                    targetId = System.currentTimeMillis()
-                )
-            }
-            return
-        }
-
-        // target size بالـ px: رح نبعت الحجم من UI كـ padding آمن تقريباً عبر targetSizePx
-        // هنا بنحجز مساحة بسيطة حول الأطراف
-        val padding = 24f
-        val maxX = (s.areaWidthPx.toFloat() - padding).coerceAtLeast(0f)
-        val maxY = (s.areaHeightPx.toFloat() - padding).coerceAtLeast(0f)
-
-        val x = Random.nextFloat() * maxX
-        val y = Random.nextFloat() * maxY
-
-        _state.update {
-            it.copy(
-                targetVisible = true,
-                targetX = x,
-                targetY = y,
-                targetColorArgb = randomColor().value.toLong(),
-                targetId = System.currentTimeMillis()
-            )
-        }
-    }
-
-    fun endGame() {
-        val finalScore = _state.value.score
-        _state.update { it.copy(isRunning = false, isGameOver = true, targetVisible = false) }
-        stopJobs()
-
-        viewModelScope.launch {
-            val best = _state.value.bestScore
-            if (finalScore > best) {
-                store.saveBestScore(finalScore)
-            }
-        }
-    }
-
-    private fun stopJobs() {
-        timerJob?.cancel()
         targetJob?.cancel()
-        timerJob = null
-        targetJob = null
+        val s = _state.value
+        if (!s.isRunning || s.areaWidthPx <= 0 || s.showLevelUp) return
+
+        val rand = Random.nextFloat()
+        val type = when {
+            rand < GameConfig.TRAP_CHANCE -> TargetType.TRAP
+            rand < GameConfig.TRAP_CHANCE + GameConfig.SPECIAL_TARGET_CHANCE -> TargetType.POWER_UP
+            else -> TargetType.NORMAL
+        }
+
+        val pType = if (type == TargetType.POWER_UP) listOf(PowerUpType.FREEZE, PowerUpType.MULTIPLIER).random() else PowerUpType.NONE
+
+        _state.update { it.copy(
+            targetVisible = true, targetType = type, powerUpType = pType,
+            targetX = Random.nextInt((s.areaWidthPx - 200).coerceAtLeast(1)).toFloat(),
+            targetY = Random.nextInt((s.areaHeightPx - 200).coerceAtLeast(1)).toFloat(),
+            targetColorArgb = if (type == TargetType.TRAP) 0xFFFF3B30 else if (type == TargetType.POWER_UP) 0xFF00FFFF else listOf(0xFF4CAF50, 0xFF2196F3, 0xFFFFC107).random()
+        ) }
+
+        targetJob = viewModelScope.launch {
+            delay(GameConfig.LEVELS[s.currentLevel - 1].targetLifeMs)
+            if (_state.value.targetVisible) { _state.update { it.copy(combo = 0, targetVisible = false) }; spawnNewTarget() }
+        }
     }
 
-    private fun randomColor(): Color {
-        val palette = listOf(
-            Color(0xFF4CAF50),
-            Color(0xFF2196F3),
-            Color(0xFFFFC107),
-            Color(0xFFE91E63),
-            Color(0xFF9C27B0),
-            Color(0xFFFF5722)
-        )
-        return palette.random()
+    private fun startPhysicsLoop() {
+        physicsJob = viewModelScope.launch {
+            while (isActive) {
+                delay(16)
+                _state.update { s -> s.copy(particles = s.particles.map { it.copy(x = it.x + it.vx, y = it.y + it.vy, vy = it.vy + 0.5f, alpha = it.alpha - 0.02f) }.filter { it.alpha > 0 }) }
+            }
+        }
     }
 
-    override fun onCleared() {
-        stopJobs()
-        super.onCleared()
+    private fun goToNextLevel() {
+        viewModelScope.launch {
+            _state.update { it.copy(showLevelUp = true, targetVisible = false) }
+            delay(1500)
+            _state.update { it.copy(showLevelUp = false, currentLevel = it.currentLevel + 1, scoreInLevel = 0) }
+            generateNewMission()
+            spawnNewTarget()
+        }
     }
+
+    private fun triggerShake() { viewModelScope.launch { _state.update { it.copy(isScreenShaking = true) }; delay(200); _state.update { it.copy(isScreenShaking = false) } } }
+    private fun addEffect(x: Float, y: Float, text: String, color: Color) {
+        val effect = TapEffect(System.currentTimeMillis(), x, y, text, color)
+        _state.update { it.copy(effects = it.effects + effect) }
+        viewModelScope.launch { delay(700); _state.update { it.copy(effects = it.effects - effect) } }
+    }
+    private fun createExplosion(x: Float, y: Float, color: Color) {
+        _state.update { s -> s.copy(particles = s.particles + (1..10).map { Particle(Random.nextLong(), x, y, Random.nextFloat() * 20 - 10, Random.nextFloat() * 20 - 10, color) }) }
+    }
+    fun endGame() { _state.update { it.copy(isRunning = false, isGameOver = true) }; stopJobs(); viewModelScope.launch { if (_state.value.score > _state.value.bestScore) store.saveBestScore(_state.value.score) } }
+    private fun stopJobs() { timerJob?.cancel(); targetJob?.cancel(); physicsJob?.cancel() }
 }
