@@ -13,10 +13,12 @@ import kotlinx.coroutines.launch
 
 data class GameState(
     val found: Set<String> = emptySet(),
-    val mistakes: Int = 0,
+    val hearts: Int = 5,
     val hintRegionId: String? = null,
     val timeLeftSec: Int = 0,
-    val isFinished: Boolean = false
+    val isFinished: Boolean = false,
+    val stars: Int = 0,
+    val win: Boolean = false
 )
 
 class GameViewModel : ViewModel() {
@@ -27,48 +29,72 @@ class GameViewModel : ViewModel() {
     private var timerJob: Job? = null
 
     fun start(level: Level) {
-        _state.value = GameState(timeLeftSec = level.timeLimitSec)
+        _state.value = GameState(
+            timeLeftSec = level.timeLimitSec,
+            hearts = level.maxMistakes
+        )
+        startTimer()
+    }
+
+    private fun startTimer() {
         timerJob?.cancel()
         timerJob = viewModelScope.launch {
             while (isActive) {
                 delay(1000)
                 val s = _state.value
                 if (s.isFinished) break
-                val next = (s.timeLeftSec - 1).coerceAtLeast(0)
-                _state.value = s.copy(timeLeftSec = next)
-                if (next == 0) {
-                    _state.value = _state.value.copy(isFinished = true)
-                    break
+
+                if (s.timeLeftSec > 0) {
+                    _state.value = s.copy(timeLeftSec = s.timeLeftSec - 1)
+                } else {
+                    finishGame(false)
                 }
             }
         }
     }
 
+    // داخل GameViewModel.kt
     fun onTap(level: Level, nx: Float, ny: Float) {
         val s = _state.value
         if (s.isFinished) return
 
-        val hit = level.regions.firstOrNull { it.id !in s.found && it.contains(nx, ny) }
-        if (hit != null) {
-            val newFound = s.found + hit.id
-            _state.value = s.copy(
-                found = newFound,
-                hintRegionId = null,
-                isFinished = newFound.size == level.regions.size
-            )
-        } else {
-            val newMistakes = s.mistakes + 1
-            _state.value = s.copy(
-                mistakes = newMistakes,
-                hintRegionId = null,
-                isFinished = newMistakes >= level.maxMistakes
-            )
+        // البحث عن أول منطقة "غير مكتشفة" تحتوي على هذه الإحداثيات
+        val hitRegion = level.regions.find { region ->
+            region.id !in s.found && region.contains(nx, ny)
         }
+
+        if (hitRegion != null) {
+            // حالة النجاح: إضافة المعرف للقائمة المكتشفة
+            val updatedFound = s.found + hitRegion.id
+            _state.value = s.copy(
+                found = updatedFound,
+                isFinished = updatedFound.size == level.regions.size
+            )
+            // هنا يمكن تشغيل صوت "نجاح"
+        } else {
+            // حالة الخطأ: خصم قلب
+            val remainingHearts = s.hearts - 1
+            _state.value = s.copy(
+                hearts = remainingHearts,
+                isFinished = remainingHearts <= 0
+            )
+            // هنا يمكن تشغيل صوت "خطأ" واهتزاز (Haptic Feedback)
+        }
+    }
+
+    private fun finishGame(win: Boolean) {
+        val s = _state.value
+        val stars = if (win) {
+            if (s.hearts >= 4) 3 else if (s.hearts >= 2) 2 else 1
+        } else 0
+
+        _state.value = s.copy(isFinished = true, win = win, stars = stars)
+        timerJob?.cancel()
     }
 
     fun hint(level: Level) {
         val s = _state.value
-        if (s.isFinished) return
+        if (s.isFinished || s.found.size == level.regions.size) return
         val notFound = level.regions.firstOrNull { it.id !in s.found } ?: return
         _state.value = s.copy(hintRegionId = notFound.id)
     }

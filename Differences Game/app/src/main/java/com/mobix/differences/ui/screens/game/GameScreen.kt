@@ -1,13 +1,21 @@
 package com.mobix.differences.ui.screens.game
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.mobix.differences.data.repo.LevelsRepository
-import com.mobix.differences.ui.screens.game.components.DiffImage
-import com.mobix.differences.ui.screens.game.components.HudBar
+import com.mobix.differences.ui.screens.game.components.*
+import com.mobix.differences.ui.theme.*
 
 @Composable
 fun GameScreen(
@@ -17,66 +25,99 @@ fun GameScreen(
 ) {
     val level = remember(levelId) { LevelsRepository.getLevel(levelId) }
     val state by vm.state.collectAsState()
-
     var transform by remember { mutableStateOf(TransformState()) }
 
     LaunchedEffect(level.id) { vm.start(level) }
 
-    Column(Modifier.fillMaxSize().padding(12.dp)) {
-        HudBar(
-            timeLeftSec = state.timeLeftSec,
-            mistakes = state.mistakes,
-            maxMistakes = level.maxMistakes,
-            found = state.found.size,
-            total = level.regions.size
-        )
+    Box(Modifier.fillMaxSize().background(BgDark)) {
+        // تدرج لوني خفيف في الخلفية لإعطاء عمق
+        Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(SurfaceDark, BgDark))))
 
-        Spacer(Modifier.height(10.dp))
+        Column(Modifier.fillMaxSize().padding(16.dp)) {
+            HudBar(state.timeLeftSec, state.hearts, state.found.size, level.regions.size)
 
-        Row(Modifier.weight(1f)) {
-            DiffImage(
-                imageRes = level.imageARes,
-                regions = level.regions,
-                found = state.found,
-                hintRegionId = state.hintRegionId,
-                transform = transform,
-                onTransformChange = { transform = it },
-                onTapNormalized = { nx, ny -> vm.onTap(level, nx, ny) },
-                modifier = Modifier.weight(1f).fillMaxHeight().padding(end = 6.dp)
-            )
-            DiffImage(
-                imageRes = level.imageBRes,
-                regions = level.regions,
-                found = state.found,
-                hintRegionId = state.hintRegionId,
-                transform = transform,
-                onTransformChange = { transform = it },
-                onTapNormalized = { nx, ny -> vm.onTap(level, nx, ny) },
-                modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 6.dp)
-            )
-        }
+            Spacer(Modifier.height(16.dp))
 
-        Spacer(Modifier.height(10.dp))
-
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Button(onClick = onBack) { Text("رجوع") }
-
-            Button(onClick = { vm.hint(level) }, enabled = !state.isFinished) {
-                Text("تلميح")
+            // حاوية الصور - Focus Mode
+            Column(Modifier.weight(1f)) {
+                DiffImage(
+                    imageRes = level.imageARes,
+                    regions = level.regions,
+                    found = state.found,
+                    hintRegionId = state.hintRegionId,
+                    transform = transform,
+                    onTapNormalized = { nx, ny -> vm.onTap(level, nx, ny) }, // تمرير منطق النقر هنا
+                    modifier = Modifier.weight(1f).fillMaxWidth()
+                )
+                Spacer(Modifier.height(12.dp))
+                DiffImage(
+                    imageRes = level.imageBRes ?: level.imageARes,
+                    regions = level.regions,
+                    found = state.found,
+                    hintRegionId = state.hintRegionId,
+                    transform = transform,
+                    onTapNormalized = { nx, ny -> vm.onTap(level, nx, ny) }, // تمرير منطق النقر هنا
+                    modifier = Modifier.weight(1f).fillMaxWidth()
+                )
             }
 
-            Button(onClick = { transform = TransformState() }) {
-                Text("Reset Zoom")
+            Spacer(Modifier.height(20.dp))
+
+            // شريط التحكم السفلي
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                ControlBtn("🔙", onBack)
+                ControlBtn("💡", { vm.hint(level) }, NeonPink)
+                ControlBtn("🔄", { transform = TransformState() }, NeonCyan)
             }
         }
 
+        // نافذة النتيجة عند انتهاء اللعبة
         if (state.isFinished) {
-            Spacer(Modifier.height(10.dp))
-            val win = state.found.size == level.regions.size
-            Text(
-                if (win) "🎉 أحسنت! اكتملت المرحلة."
-                else "انتهت المحاولة! حاول مرة أخرى."
+            GameResultOverlay(
+                win = state.found.size == level.regions.size,
+                onBack = onBack
             )
+        }
+    }
+}
+
+@Composable
+fun ControlBtn(icon: String, onClick: () -> Unit, accent: Color = Color.White) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier
+            .size(60.dp)
+            .background(GlassEffect, RoundedCornerShape(18.dp))
+            .border(1.dp, accent.copy(alpha = 0.3f), RoundedCornerShape(18.dp))
+    ) {
+        Text(icon, fontSize = 24.sp)
+    }
+}
+
+@Composable
+fun GameResultOverlay(win: Boolean, onBack: () -> Unit) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.85f)),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = if (win) "LEVEL CLEAR!" else "GAME OVER",
+                color = if (win) NeonCyan else NeonPink,
+                fontSize = 44.sp,
+                fontWeight = FontWeight.Black
+            )
+            Spacer(Modifier.height(24.dp))
+            Button(
+                onClick = onBack,
+                colors = ButtonDefaults.buttonColors(containerColor = NeonCyan),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.height(56.dp).padding(horizontal = 32.dp)
+            ) {
+                Text("CONTINUE", color = BgDark, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+            }
         }
     }
 }
